@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en" data-theme="notion">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>RoPE / YaRN — Attention Geometry</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='5' y='3' width='54' height='58' rx='3' fill='white' stroke='%2337352f' stroke-width='3'/%3E%3Ctext x='32' y='47' text-anchor='middle' font-family='Georgia' font-size='46' font-weight='bold' fill='%2337352f'%3ER%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="RoPE Lab home"><span class="brand-mark">R</span> RoPE lab <span class="brand-light">/</span><span class="brand-caption">Attention geometry</span></a>
+    <nav class="header-right" aria-label="Sections"><a href="#clocks-heading">Pairs</a><a href="#chart-heading">Score</a><a href="#contribution-heading">Contributions</a><a href="#softmax-heading">Softmax</a><a href="#method">Model spec</a><span class="model-pill">Qwen3-0.6B</span><button type="button" id="parameters-toggle" class="parameters-toggle" aria-expanded="false" aria-controls="experiment-controls">Parameters</button></nav>
+  </header>
+
+  <main>
+    <div class="intro">
+      <div><p class="eyebrow">Interactive notebook</p><h1>RoPE & YaRN</h1><p class="intro-description">Explore attention geometry in Qwen3-0.6B.<br>Two tokens, 16 heads, 64 rotary pairs.</p></div>
+      <div class="intro-note"><span>LAYER <strong>0</strong> / Q HEAD <strong id="active-head">00</strong> / <span id="active-key-label">KV</span> <strong id="active-kv-head">00</strong></span><span>d<sub>head</sub> = 128 <span class="note-divider">|</span> 64 rotary pairs</span><span>RoPE base b = <strong id="base-readout">1,000,000</strong></span></div>
+    </div>
+
+    <div class="workspace">
+      <aside class="controls" id="experiment-controls" aria-label="Experiment parameters">
+        <div class="sidebar-heading"><h2>Parameters <span class="live-indicator"><span class="status-dot"></span> LIVE</span></h2><div><button class="text-button" id="reset" type="button">Reset</button><button class="close-controls" id="close-controls" type="button" aria-label="Close parameters">×</button></div></div>
+        <section class="control-section head-section" aria-labelledby="head-heading">
+          <div class="head-heading"><h2 id="head-heading">Attention head</h2><span class="layer-label">LAYER 0</span></div>
+          <div class="head-selector"><button type="button" id="previous-head" aria-label="Previous attention head">←</button><select id="head-select" aria-label="Query attention head"><option value="0">Q head 00 → KV 00</option></select><button type="button" id="next-head" aria-label="Next attention head">→</button></div>
+          <p class="field-note" id="head-mapping">Grouped-query attention: 16 Q heads / 8 KV heads.</p>
+        </section>
+        <section class="control-section">
+          <h2><span class="step">01</span> Input tokens</h2>
+          <label class="check-field shared-mode-toggle"><input type="checkbox" id="shared-vectors"><span>Use the same vector · Q = K</span></label>
+          <form id="words-form">
+            <div class="word-input"><label for="query-word"><span class="legend-dot query"></span> QUERY <span>q</span></label><input id="query-word" value="cat" maxlength="128" autocomplete="off" spellcheck="false" aria-describedby="tokens-note"></div>
+            <div class="tokens" id="query-tokens" aria-label="Query tokens"></div>
+            <div id="key-inputs"><div class="word-input"><label for="key-word"><span class="legend-dot key"></span> KEY <span>k</span></label><input id="key-word" value="fluffy" maxlength="128" autocomplete="off" spellcheck="false" aria-describedby="tokens-note"></div>
+            <div class="tokens" id="key-tokens" aria-label="Key tokens"></div></div>
+            <p id="shared-note" class="shared-note hidden">K is the same Q vector before RoPE. This experimental tie replaces the model's learned K.</p>
+            <p class="field-note" id="tokens-note">Select one token per input. A word may span multiple tokens. Input updates automatically.</p>
+            <button class="primary-button" id="load-words" type="submit">Compute Q / K <span>↵</span></button>
+          </form>
+          <div id="load-status" class="load-status" role="status" aria-live="polite">Loading Qwen tokenizer and weights…</div>
+          <button id="retry" class="text-button hidden" type="button">Retry loading</button>
+        </section>
+
+        <section class="control-section">
+          <h2><span class="step">02</span> Relative position</h2>
+          <div class="distance-value"><span>Δ = m − n</span><label><input type="number" id="distance" min="0" max="1310720" step="1" value="10" aria-label="Token distance"><span>tokens</span></label></div>
+          <input type="range" id="distance-slider" min="0" max="4096" step="1" value="10" aria-label="Adjust token distance">
+          <div class="range-labels"><span>0</span><select id="distance-range" aria-label="Distance slider range"><option value="4096">max 4,096</option><option value="32768">max 32,768</option><option value="163840">max 163,840</option><option value="1310720">max 1,310,720</option></select></div>
+          <div class="preset-row" aria-label="Distance presets"><button type="button" data-distance="0">0</button><button type="button" data-distance="1">1</button><button type="button" data-distance="10" class="active">10</button><button type="button" data-distance="1000">1K</button><button type="button" data-distance="10000">10K</button></div>
+          <details class="offset-details"><summary>Common position offset <span>+</span></summary><label class="inline-field" for="offset">Offset n <input type="number" id="offset" min="0" max="1000000" step="1" value="0"></label><p class="field-note">Both vectors rotate; their dot product is invariant under a common shift.</p></details>
+          <div class="position-line"><span class="query-text">q: m = <b id="query-position">10</b></span><span class="key-text">k: n = <b id="key-position">0</b></span></div>
+        </section>
+
+        <section class="control-section frequency-section">
+          <h2><span class="step">03</span> RoPE frequency base</h2>
+          <label class="inline-field" for="rope-base">Base b <input type="number" id="rope-base" value="1000000" min="100" max="100000000" step="1000"></label>
+          <input type="range" id="base-slider" min="2" max="8" step="0.02" value="6" aria-label="Logarithmic RoPE frequency base">
+          <div class="range-labels"><span>10²</span><span>10⁸</span></div>
+          <div class="preset-row"><button type="button" data-base="10000">10K</button><button type="button" data-base="1000000" class="active">1M · Qwen</button><button type="button" data-base="100000000">100M</button></div>
+          <p class="field-note frequency-note">θᵢ = b⁻²ⁱ/ᵈ. Changes rotation speeds in both RoPE and YaRN, separately from softmax temperature.</p>
+        </section>
+
+        <section class="control-section yarn-section">
+          <div class="toggle-heading"><h2><span class="step">04</span> YaRN scaling</h2><label class="switch"><input id="yarn-enabled" type="checkbox" checked aria-label="Enable YaRN"><span></span></label></div>
+          <p class="field-note">Preserve high frequencies; interpolate low frequencies.</p>
+          <div id="yarn-controls">
+            <label class="inline-field" for="factor">Scale factor s <span class="factor-field"><input type="number" id="factor" min="1" max="32" step="0.5" value="4"><span>×</span></span></label>
+            <input type="range" id="factor-slider" min="1" max="32" step="0.5" value="4" aria-label="YaRN scale factor">
+            <div class="range-labels"><span>1×</span><span>32×</span></div>
+            <details class="advanced"><summary>Frequency parameters <span>+</span></summary><label class="inline-field" for="original-length">Reference length L₀ <input type="number" id="original-length" value="40960" min="128" max="131072" step="1"></label><div class="beta-fields"><label for="beta-fast">β fast<input id="beta-fast" type="number" min="1.1" max="128" step="0.1" value="32"></label><label for="beta-slow">β slow<input id="beta-slow" type="number" min="0.1" max="32" step="0.1" value="1"></label></div><p class="field-note">L₀ defaults to 40,960 from the model config. Require β fast &gt; β slow.</p></details>
+            <div class="context-extension"><span id="context-from">40,960</span><span>→</span><strong id="context-to">163,840</strong><span>tokens</span></div>
+          </div>
+        </section>
+        <section class="control-section temperature-section">
+          <h2><span class="step">05</span> Softmax scaling</h2>
+          <label class="check-field"><input type="checkbox" id="temperature" checked><span>Apply YaRN attention scaling</span></label>
+          <div id="temperature-controls">
+            <label class="inline-field" for="temperature-mode">Rule <select id="temperature-mode"><option value="auto">YaRN formula</option><option value="manual">Manual multiplier</option></select></label>
+            <div id="coefficient-controls"><label class="inline-field" for="temperature-coefficient">Coefficient c <input type="number" id="temperature-coefficient" min="0" max="0.5" step="0.01" value="0.1"></label><input type="range" id="coefficient-slider" min="0" max="0.5" step="0.01" value="0.1" aria-label="YaRN temperature coefficient"><div class="range-labels"><span>0</span><span>0.5</span></div></div>
+            <div id="manual-temperature-controls" class="hidden"><label class="inline-field" for="logit-scale">Logit multiplier λ <input type="number" id="logit-scale" min="0.01" max="8" step="0.01" value="1.2965"></label><input type="range" id="logit-scale-slider" min="0.01" max="8" step="0.01" value="1.2965" aria-label="Manual logit multiplier"></div>
+            <div class="temperature-formula" id="temperature-formula">a = 1 + c ln(s) · λ = a²</div>
+            <p class="field-note" id="temperature-effect">Scales logits without changing rotation angles.</p>
+          </div>
+          <a class="softmax-jump" href="#softmax-heading">See the softmax distribution ↓</a>
+        </section>
+        <p class="sidebar-footnote">BF16 checkpoint → float64 calculations<br>All plots update on parameter changes.</p>
+      </aside>
+      <button class="controls-backdrop" id="controls-backdrop" type="button" aria-label="Close parameter panel" tabindex="-1"></button>
+
+      <div class="results" id="results" aria-busy="true">
+        <div class="result-toolbar"><span class="eyebrow">ATTENTION SCORE <span class="mode-badge hidden" id="vector-mode-status">Q = K before RoPE</span></span><div class="segmented metric-toggle" aria-label="Score metric"><button class="active" type="button" data-metric="dot">q · k</button><button type="button" data-metric="cosine">cos θ</button><button type="button" data-metric="logit">q · k / √d</button></div></div>
+        <div class="metrics">
+          <article class="metric-card baseline"><div class="metric-title"><span class="metric-dot"></span> Before RoPE <span class="metric-tag">Q · K</span></div><strong class="metric-number" id="before-value">—</strong><p id="before-detail">Query and key before positional rotation</p></article>
+          <article class="metric-card rope"><div class="metric-title"><span class="metric-dot"></span> RoPE <span class="metric-tag">Δ = <span id="delta-tag">10</span></span></div><strong class="metric-number" id="rope-value">—</strong><p id="rope-detail">Original model frequencies</p></article>
+          <article class="metric-card yarn"><div class="metric-title"><span class="metric-dot"></span> YaRN <span class="metric-tag" id="factor-tag">4×</span></div><strong class="metric-number" id="yarn-value">—</strong><p id="yarn-detail">Frequency interpolation and temperature correction</p></article>
+        </div>
+        <div class="invariant-line"><span class="invariant-icon">∥</span><span id="invariant-text">RoPE preserves vector norms. YaRN temperature correction rescales both vectors.</span></div>
+
+        <section class="panel clocks-panel" aria-labelledby="clocks-heading">
+          <div class="clocks-toolbar" id="clocks-toolbar">
+            <div class="panel-heading"><div><p class="eyebrow">Rotary subspaces</p><h2 id="clocks-heading">64 frequency pairs</h2></div><div class="segmented display-toggle" role="group" aria-label="Rotation displayed in the grid"><button type="button" data-display="rope" aria-pressed="false">RoPE</button><button type="button" data-display="yarn" class="active" aria-pressed="true">YaRN</button></div></div>
+            <div class="clocks-legend"><span><i class="legend-line query"></i> Q after</span><span><i class="legend-line key"></i> K after</span><span class="reference-legend"><i class="legend-line ghost query"></i> Q before</span><span class="reference-legend"><i class="legend-line ghost key"></i> K before</span><label class="reference-control"><input type="checkbox" id="show-reference" checked>Show before RoPE</label></div>
+            <p class="clock-positions" id="clock-positions">Q at m = 10 · K at n = 0</p>
+          </div>
+          <p class="panel-description">Pair i = (xᵢ, xᵢ₊₆₄). Frequency decreases in row-major order. Select a pair to inspect its rotation.</p>
+          <div class="reference-note"><p>Dashed arrows are the original, projected and normalized Q and K <strong>before positional rotation</strong>. Solid arrows show Q rotated at position m and K at n, using the selected method's frequencies.</p><p><span id="clock-rotation-note">K is at n = 0, so its positional rotation is zero.</span> <button type="button" id="rotate-both-demo">Set n = 100 to rotate both</button></p></div>
+          <div class="frequency-direction"><span>HIGH FREQUENCY</span><span>θᵢ = base<sup>−2i/d</sup></span><span>LOW FREQUENCY</span></div>
+          <div class="clock-grid" id="clock-grid" aria-label="64 rotary coordinate pairs"><div class="skeleton-message">Loading query and key vectors…<span>Only the required checkpoint ranges are downloaded.</span></div></div>
+          <div class="clock-footer"><span id="band-summary">β fast = 32 · β slow = 1</span><span>Independent scale per pair; relative vector lengths preserved.</span></div>
+        </section>
+
+        <section class="panel pair-panel" aria-labelledby="pair-heading">
+          <div class="panel-heading"><div><p class="eyebrow">02 / PAIR INSPECTOR</p><h2 id="pair-heading">Pair <span id="selected-pair">00</span><span class="heading-light" id="pair-coordinates"> · dimensions 0, 64</span></h2></div><div class="pair-navigation"><button type="button" id="previous-pair" aria-label="Previous pair">←</button><button type="button" id="next-pair" aria-label="Next pair">→</button></div></div>
+          <div class="pair-comparison" id="pair-comparison"><p class="field-note">The selected pair will appear here after loading.</p></div>
+          <div class="pair-explanation" id="pair-explanation">θᵢ = base⁻²ⁱ/ᵈ · base = 1,000,000 · d = 128</div>
+        </section>
+
+        <section class="panel chart-panel" aria-labelledby="chart-heading">
+          <div class="panel-heading"><div><p class="eyebrow">03 / POSITION RESPONSE</p><h2 id="chart-heading">Score vs. relative position</h2></div><label class="chart-range-label">Δ range<select id="chart-range" aria-label="Score chart range"><option value="64">0–64</option><option value="1024">0–1,024</option><option value="8192" selected>0–8,192</option><option value="65536">0–65,536</option><option value="163840">0–163,840</option><option value="1310720">0–1,310,720</option></select></label></div>
+          <div class="chart-legend"><span><i class="legend-line baseline"></i> Before RoPE</span><span><i class="legend-line rope-color"></i> RoPE</span><span><i class="legend-line yarn-color"></i> YaRN</span><span class="legend-extra">Click or drag to set Δ</span></div>
+          <div class="chart-wrap"><canvas id="score-chart" height="270" tabindex="0" role="img" aria-label="Score as a function of token distance. Click to set the distance; use arrow keys to adjust it."></canvas><div id="chart-tooltip" class="chart-tooltip hidden"></div></div>
+          <p class="chart-note" id="chart-note">The score is oscillatory. It need not decrease monotonically with distance.</p>
+        </section>
+
+        <section class="panel contribution-panel" aria-labelledby="contribution-heading"><div class="panel-heading"><div><p class="eyebrow">04 / SCORE DECOMPOSITION</p><h2 id="contribution-heading">Per-pair contributions</h2></div><span class="small-muted">Σᵢ cᵢ = q · k</span></div><p class="panel-description">Signed contributions from the 64 rotary pairs. Select a bar to inspect the corresponding pair.</p><canvas id="contribution-chart" height="180" tabindex="0" role="img" aria-label="Contributions of all 64 pairs to the dot product. Use arrow keys to select a pair."></canvas><div class="contribution-footer"><span><i class="legend-line rope-color"></i> RoPE</span><span><i class="legend-line yarn-color"></i> YaRN <span id="contribution-temp-note">including a²</span></span><strong id="contribution-sum">Σ = —</strong></div></section>
+
+        <section class="panel softmax-panel" aria-labelledby="softmax-heading">
+          <div class="panel-heading"><div><p class="eyebrow">Attention distribution</p><h2 id="softmax-heading">Before & after temperature correction</h2></div><label class="check-field softmax-enable"><input type="checkbox" id="softmax-apply" checked>Apply correction</label></div>
+          <p class="panel-description" id="attention-description">Compare attention from your selected Q to the tokens below. Each token has its own learned K. The correction redistributes the same 100% of attention; it sharpens existing preferences.</p>
+          <form id="attention-form" class="attention-form"><label for="attention-text">Keys · text before Q</label><div class="attention-input-row"><textarea id="attention-text" rows="2" maxlength="512" spellcheck="false">The cat is soft and fluffy.</textarea><button type="submit" id="attention-compute">Compute attention</button></div></form>
+          <div class="attention-context-line"><span>Query: <strong id="attention-query">cat</strong></span><label for="attention-gap">Distance to last key <input type="number" id="attention-gap" min="0" max="1310720" value="10" step="1"> tokens</label></div>
+          <p class="field-note" id="attention-status" role="status" aria-live="polite">Loading token keys…</p>
+          <div class="softmax-controls"><span class="field-note">Layer 0 · same head and rotation settings as above</span><button type="button" id="restore-yarn-temperature">Use YaRN formula</button></div>
+          <div class="softmax-scale-control"><label for="softmax-scale">Logit multiplier λ <strong id="softmax-scale-value">1.2965</strong></label><input type="range" id="softmax-scale" min="0.01" max="8" step="0.01" value="1.2965" aria-label="Live softmax logit multiplier"><p id="softmax-rule">YaRN formula · λ = (1 + 0.1 ln(s))²</p></div>
+          <div class="softmax-equation">pᵢ = exp(λzᵢ) / Σⱼ exp(λzⱼ) <span>·</span> zᵢ = Q′ · Kᵢ′ / √128</div>
+          <p class="attention-effect" id="attention-effect">Temperature changes confidence in the current scores. The highest-scoring token stays the same.</p>
+          <div class="attention-chart-heading"><span><i class="legend-line rope-color"></i> Without correction · λ = 1</span><span><i class="legend-line yarn-color"></i> <span id="softmax-scaled-legend">With correction · λ = 1.2965</span></span><span id="attention-axis-scale">Shared probability scale</span></div>
+          <div id="softmax-distribution" class="attention-distribution" role="table" aria-label="Attention probability for each token, without and with temperature correction" aria-busy="true"></div>
+          <div class="softmax-stats"><div><span>Top token probability</span><strong id="softmax-peak">—</strong></div><div><span>Entropy · bits</span><strong id="softmax-entropy">—</strong></div><div><span>Effective keys · 2ᴴ</span><strong id="softmax-effective">—</strong></div><div><span>Attention redistributed</span><strong id="softmax-redistributed">—</strong></div></div>
+          <p class="chart-note" id="softmax-explanation">Each column sums to 100%. Positive changes gain attention; negative changes give it up.</p>
+        </section>
+
+        <section class="method-panel" id="method">
+          <p class="eyebrow">MODEL SPECIFICATION</p><h2>Computation and assumptions</h2>
+          <div class="method-grid"><article><span class="method-number">01</span><h3>Checkpoint and projections</h3><p>Tokenizer and BF16 weights from <a href="https://huggingface.co/Qwen/Qwen3-0.6B" target="_blank" rel="noreferrer">Qwen3-0.6B ↗</a>. Token vector (1024) → input RMSNorm → learned Wq / Wk → Q/K RMSNorm. Select any of the 16 Q heads in layer 0; Q head h uses KV head floor(h / 2). Shared mode explicitly replaces K with Q before rotation, as an experimental control.</p></article><article><span class="method-number">02</span><h3>Rotary convention</h3><p>128 dimensions form 64 split-half pairs (xᵢ, xᵢ₊₆₄), matching Qwen. θᵢ = b<sup>−2i/128</sup>, with b = 1,000,000 by default. The base controls angular frequencies; it is independent of softmax scaling. Query rotates by mθᵢ; key rotates by nθᵢ.</p></article><article><span class="method-number">03</span><h3>YaRN transformation</h3><p>A linear ramp preserves high frequencies and divides low frequencies by s. Attention correction a = 1 + c ln(s), with c = 0.1 by default, scales both vectors. Logits are multiplied by λ = a²; manual mode sets λ directly. The attention comparison uses identical frequencies in both columns.</p></article><article><span class="method-number">04</span><h3>Runtime and deeper layers</h3><p>Calculations run directly in browser JavaScript, without Hugging Face Transformers. Before the first attention operation, Q/K are independent of surrounding tokens. Deeper layers require a full contextual forward pass. The attention panel normalizes over the entered key tokens only; it excludes Q's own K and any unspecified intervening tokens. It does not compute V or a model continuation.</p></article></div>
+          <div class="formula-strip">⟨R(m)q, R(n)k⟩ = ∑ᵢ |qᵢ| |kᵢ| cos(αᵢ − βᵢ + (m − n)θᵢ)</div>
+          <p class="method-bottom">Positions are zero-indexed with m ≥ n. Selected tokens are placed at the specified positions; intervening text is not generated. Float64 calculations from BF16 weights may differ slightly from BF16 inference. <a href="https://arxiv.org/abs/2309.00071" target="_blank" rel="noreferrer">YaRN paper ↗</a> · <a href="https://huggingface.co/Qwen/Qwen3-0.6B/blob/c1899de289a04d12100db370d81485cdf75e47ca/config.json" target="_blank" rel="noreferrer">Model config ↗</a></p>
+        </section>
+    <footer class="site-footer"><span>RoPE / YaRN <span class="footer-separator">|</span> Attention geometry inspector</span><span id="model-footer">Qwen3-0.6B · layer 0 · head 0 · d = 128</span></footer>
+      </div>
+    </div>
+  </main>
+  <noscript>JavaScript is required. Run python3 server.py and open this page in a modern browser.</noscript>
+</body>
+</html>
